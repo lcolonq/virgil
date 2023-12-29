@@ -1,0 +1,43 @@
+Instruction format: frame,x,y
+Wait for frame, look up 8 pixels (left to right, top to bottom) surrounding (x, y) (wrapping on x and y)
+The resulting byte determines the semantics.
+Probably a stack machine, mostly? Registers grow the size of the instruction set.
+
+* State
+- data stack. elements are typed:
+  integers of 8,16,32,64 bits with optional sign
+  local offsets
+  global offsets
+  PC values
+- control stack. each value is save local memory + return PC
+* Instructions
+** Data
+LIT8 (interpret next instruction as data, push that byte)
+LIT16 (interpret next two instructions as data, push that byte)
+LIT32 (interpret next four instructions as data, push that byte)
+LIT64 (interpret next eight instructions as data, push that byte)
+LOCALADDR (push the current local address to the stack. note this isn't a number! but you can add to it)
+GLOBALADDR (push the base global address to the stack. note this isn't a number! but you can add to it)
+READ8 (pop address from stack, read one byte, push result to stack)
+READ16 (pop address from stack, read two bytes, push result to stack)
+READ32 (pop address from stack, read four bytes, push result to stack)
+READ64 (pop address from stack, read eight bytes, push result to stack)
+WRITE (pop value and address from stack and write value to address (size based on size of value))
+** Arithmetic
+(all from the stack, automatically handling extensions)
+ADD
+SUB
+MUL
+DIV
+MOD
+TRUNC8 (truncate one byte)
+TRUNC16 (truncate two byte)
+TRUNC32 (truncate four byte)
+TRUNC64 (truncate eight byte)
+** Control flow
+HERE (push current PC to stack)
+JUMPTO (pop PC from stack and jump to it)
+JUMP (interpret next four instructions as a new PC, jump to it)
+** Subroutines
+CALL (push all locals and return PC to control stack, jump to PC on data stack)
+RETURN (restore all globals and PC from control stack)

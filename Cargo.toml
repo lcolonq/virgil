@@ -1,0 +1,10 @@
+[package]
+name = "virgil"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+image = "*"
+pico-args = "*"
+serde = {version = "*", features = ["derive"]}
+serde_json = "*"
