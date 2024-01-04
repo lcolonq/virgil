@@ -9,6 +9,8 @@ Probably a stack machine, mostly? Registers grow the size of the instruction set
   local offsets
   global offsets
   PC values
+- local memory
+- global memory
 - control stack. each value is save local memory + return PC
 * Instructions
 ** Data
@@ -18,13 +20,14 @@ LIT32 (interpret next four instructions as data, push that byte)
 LIT64 (interpret next eight instructions as data, push that byte)
 LOCALADDR (push the current local address to the stack. note this isn't a number! but you can add to it)
 GLOBALADDR (push the base global address to the stack. note this isn't a number! but you can add to it)
-READ8 (pop address from stack, read one byte, push result to stack)
-READ16 (pop address from stack, read two bytes, push result to stack)
-READ32 (pop address from stack, read four bytes, push result to stack)
-READ64 (pop address from stack, read eight bytes, push result to stack)
+READ8 (pop address from stack, read value, push value to stack)
+READ16
+READ32
+READ64
 WRITE (pop value and address from stack and write value to address (size based on size of value))
 ** Arithmetic
 (all from the stack, automatically handling extensions)
+SIGN (pop an unsigned integer and push the same bytes as a signed integer)
 ADD
 SUB
 MUL

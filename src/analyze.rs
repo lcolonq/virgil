@@ -74,6 +74,7 @@ pub fn frequencies() {
     let res = Results::load();
     for pat in 0..=255 {
         let occs = res.patterns.get(&pat).expect("failed to find pattern");
-        println!("{:#04x} {}", pat, (occs.len() as f32) / 6574.0);
+        // println!("{:#04x} {}", pat, (occs.len() as f32) / 6574.0);
+        println!("{:#04x} {}", pat, occs.len());
     }
 }
