@@ -37,10 +37,16 @@ TRUNC8 (truncate one byte)
 TRUNC16 (truncate two byte)
 TRUNC32 (truncate four byte)
 TRUNC64 (truncate eight byte)
+** Stack manipulation
+DUP
+SWAP
+DROP
 ** Control flow
 HERE (push current PC to stack)
-JUMPTO (pop PC from stack and jump to it)
-JUMP (interpret next four instructions as a new PC, jump to it)
+JUMP (pop PC from stack and jump to it)
+JUMPIF (pop value and PC from stack, jump to PC if value is nonzero)
 ** Subroutines
 CALL (push all locals and return PC to control stack, jump to PC on data stack)
 RETURN (restore all globals and PC from control stack)
+** Misc
+DUMP (debug log a value)

@@ -1,7 +1,13 @@
 mod analyze;
 mod vm;
+mod compiler;
 
-fn main() {
+use anyhow::*;
+
+fn main() -> Result<()> {
+    env_logger::builder()
+        .filter(None, log::LevelFilter::max())
+        .init();
     let mut pargs = pico_args::Arguments::from_env();
     if let Some(cmd) = pargs.subcommand().expect("failed to parse arguments") {
         match cmd.as_ref() {
@@ -13,19 +19,35 @@ fn main() {
             },
             "vm" => {
                 let mut st = vm::State::new();
-                st.run_instruction(&vm::Instruction::GlobalAddr);
-                st.run_instruction(&vm::Instruction::Lit64(1337));
-                st.run_instruction(&vm::Instruction::Add);
-                st.run_instruction(&vm::Instruction::Lit32(0xdeadbeef));
-                st.run_instruction(&vm::Instruction::Write);
-                st.run_instruction(&vm::Instruction::GlobalAddr);
-                st.run_instruction(&vm::Instruction::Lit64(1337));
-                st.run_instruction(&vm::Instruction::Add);
-                st.run_instruction(&vm::Instruction::Read32);
-                println!("{:?}", st.stack);
-                println!("{:?}", st.globals);
+                let mut prog = vm::Program::new(vec![
+                    vm::Instruction::GlobalAddr,
+                    vm::Instruction::Lit64(1337),
+                    vm::Instruction::Add,
+                    vm::Instruction::Lit16(0),
+                    vm::Instruction::Write,
+
+                    vm::Instruction::Here,
+                    vm::Instruction::GlobalAddr,
+                    vm::Instruction::Lit64(1337),
+                    vm::Instruction::Add,
+                    vm::Instruction::Dup,
+                    vm::Instruction::Read16,
+                    vm::Instruction::Dup,
+                    vm::Instruction::Dump,
+                    vm::Instruction::Lit8(1),
+                    vm::Instruction::Add,
+                    vm::Instruction::Write,
+                    vm::Instruction::Jump,
+                ]);
+                prog.run(&mut st);
+            },
+            "compile" => {
+                let path: String = pargs.free_from_str().expect("specify a path to compile");
+                let t = compiler::parse(&path);
+                log::info!("{:?}", t);
             },
             _ => {},
         }
     }
+    Ok(())
 }
