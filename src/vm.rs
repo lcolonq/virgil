@@ -7,6 +7,7 @@ pub enum Instruction {
     Lit16(u16),
     Lit32(u32),
     Lit64(u64),
+    Program,
     LocalAddr,
     GlobalAddr,
     ReadAddr,
@@ -26,8 +27,10 @@ pub enum Instruction {
     Trunc32,
     // Stack manipulation
     Dup,
+    Over,
     Swap,
     Drop,
+    Rot,
     // Control flow
     Here,
     Jump,
@@ -88,6 +91,7 @@ pub enum MemValue {
 
 #[derive(Debug, Clone)]
 pub enum Value {
+    Empty,
     LocalOffset(u64),
     GlobalOffset(u64),
     PC(u64),
@@ -100,6 +104,7 @@ pub enum Value {
 impl Value {
     pub fn to_memvalues(&self) -> Vec<MemValue> {
         match self {
+            Value::Empty => vec![],
             Value::GlobalOffset(x) => vec![MemValue::GlobalOffset(*x)],
             Value::LocalOffset(x) => vec![MemValue::LocalOffset(*x)],
             Value::PC(x) => vec![MemValue::PC(*x)],
@@ -159,6 +164,7 @@ impl Memory {
     }
 }
 
+#[derive(Debug)]
 pub struct Frame {
     pub locals: Memory,
     pub return_pc: u64,
@@ -332,6 +338,10 @@ impl State {
                 self.push(Value::U64(*v));
                 pc + 1
             },
+            Instruction::Program => {
+                self.push(Value::PC(0));
+                pc + 1
+            },
             Instruction::LocalAddr => {
                 self.push(Value::LocalOffset(0));
                 pc + 1
@@ -467,6 +477,14 @@ impl State {
                 self.push(x);
                 pc + 1
             },
+            Instruction::Over => {
+                let x = self.pop();
+                let y = self.pop();
+                self.push(y.clone());
+                self.push(x);
+                self.push(y);
+                pc + 1
+            },
             Instruction::Swap => {
                 let x = self.pop();
                 let y = self.pop();
@@ -476,6 +494,15 @@ impl State {
             },
             Instruction::Drop => {
                 let _ = self.pop();
+                pc + 1
+            },
+            Instruction::Rot => {
+                let x = self.pop();
+                let y = self.pop();
+                let z = self.pop();
+                self.push(x);
+                self.push(z);
+                self.push(y);
                 pc + 1
             },
             Instruction::Here => {

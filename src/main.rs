@@ -48,10 +48,10 @@ fn main() -> Result<()> {
                 log::info!("{:?}", t);
                 let mut comp = compiler::State::new();
                 comp.load(&path);
-                comp.instructions.push(vm::Instruction::Dump);
                 log::info!("{:?}", comp.instructions);
                 let mut vm = vm::State::new();
                 let mut prog = vm::Program::new(comp.instructions);
+                prog.pc = *comp.functions.get("main").expect("no main function");
                 prog.run(&mut vm);
             },
             _ => {},
