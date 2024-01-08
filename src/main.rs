@@ -43,8 +43,16 @@ fn main() -> Result<()> {
             },
             "compile" => {
                 let path: String = pargs.free_from_str().expect("specify a path to compile");
-                let t = compiler::parse(&path);
+                let config = lang_c::driver::Config::default();
+                let t = lang_c::driver::parse(&config, &path).unwrap();
                 log::info!("{:?}", t);
+                let mut comp = compiler::State::new();
+                comp.load(&path);
+                comp.instructions.push(vm::Instruction::Dump);
+                log::info!("{:?}", comp.instructions);
+                let mut vm = vm::State::new();
+                let mut prog = vm::Program::new(comp.instructions);
+                prog.run(&mut vm);
             },
             _ => {},
         }
