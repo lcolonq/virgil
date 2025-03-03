@@ -1,7 +1,11 @@
 use std::collections::HashMap;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Instruction {
+    // Cheat lololololololol
+    Syscall, // pop number and then do something very fancy based on the number hehe
+    // Nop
+    Nop,
     // Data
     Lit8(u8),
     Lit16(u16),
@@ -16,6 +20,12 @@ pub enum Instruction {
     Read32,
     Read64,
     Write,
+    // Boolean
+    Not,
+    // Comparison
+    Equal,
+    Less,
+    // LessEqual,
     // Arithmetic
     Add,
     Sub,
@@ -40,6 +50,9 @@ pub enum Instruction {
     Return,
     // Miscellaneous
     Dump,
+}
+
+impl Instruction {
 }
 
 #[derive(Debug, Clone)]
@@ -89,7 +102,16 @@ pub enum MemValue {
     U8(u8),
 }
 
-#[derive(Debug, Clone)]
+impl MemValue {
+    pub fn as_byte(&self) -> Option<u8> {
+        match self {
+            Self::U8(b) => Some(*b),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Value {
     Empty,
     LocalOffset(u64),
@@ -179,7 +201,62 @@ impl Frame {
     }
 }
 
+pub struct Graphics {
+    sdl: sdl2::Sdl,
+    video: sdl2::VideoSubsystem,
+    // window: sdl2::video::Window,
+    canvas: sdl2::render::Canvas<sdl2::video::Window>,
+    event_pump: sdl2::EventPump,
+    texture_creator: sdl2::render::TextureCreator<sdl2::video::WindowContext>,
+}
+
+impl Graphics {
+    pub fn new() -> Self {
+        let sdl = sdl2::init().expect("failed to initialize sdl2");
+        let video = sdl.video().expect("failed to initialize video");
+        let window = video.window("bad apple :3", 800, 600).build().expect("failed to open window");
+        let mut canvas = window.into_canvas()
+            // .accelerated()
+            .build().expect("failed to initialize canvas");
+        sdl2::hint::set("SDL_RENDER_LOGICAL_SIZE_MODE", "letterbox");
+        canvas.set_logical_size(640, 400).expect("failed to set logical size");
+        let event_pump = sdl.event_pump().expect("failed to initialize event pump");
+        let texture_creator = canvas.texture_creator();
+        Self {
+            sdl,
+            video,
+            // window,
+            canvas,
+            event_pump,
+            texture_creator,
+        }
+    }
+
+    pub fn render(&mut self, v: [u32; 640 * 400]) {
+        let pixels: Vec<u8> = v.iter().flat_map(|x| x.to_be_bytes()).collect();
+        let mut frame = self.texture_creator.create_texture(
+            None, 
+            sdl2::render::TextureAccess::Streaming,
+            640,
+            400,
+        ).expect("failed to create texture");
+        frame.update(
+            None,
+            &pixels,
+            640 * 400
+        ).expect("failed to update texture");
+        self.canvas.set_draw_color(sdl2::pixels::Color::RGB(0, 0, 0));
+        self.canvas.clear();
+        self.canvas.set_draw_color(sdl2::pixels::Color::RGB(30, 30, 30));
+        self.canvas.fill_rect(None).unwrap();
+        self.canvas.set_draw_color(sdl2::pixels::Color::RGB(0, 255, 0));
+        self.canvas.draw_rect(sdl2::rect::Rect::new(10, 20, 20, 10)).unwrap();
+        self.canvas.present();
+    }
+}
+
 pub struct State {
+    pub graphics: Graphics,
     pub stack: Vec<Value>,
     pub globals: Memory,
     pub control: Vec<Frame>,
@@ -188,6 +265,7 @@ pub struct State {
 impl State {
     pub fn new() -> Self {
         Self {
+            graphics: Graphics::new(),
             stack: Vec::new(),
             globals: Memory::new(),
             control: vec![Frame::new(0x1337)],
@@ -227,11 +305,21 @@ impl State {
     }
 
     fn write(&mut self, v: Value, addr: Value) {
+        // log::info!("write: {:?}", v);
         let (mem, o) = self.addr_to_memoff_mut(addr);
         let mvs = v.to_memvalues();
         for (i, mv) in mvs.iter().enumerate() {
             mem.contents.insert(o + (i as u64), mv.clone());
         }
+    }
+
+    fn read_u32_safe(mem: &Memory, off: u64) -> Option<u32> {
+        let p =
+            (mem.contents.get(&off)?.as_byte()? as u32) << 24
+            | (mem.contents.get(&(off + 1))?.as_byte()? as u32) << 16
+            | (mem.contents.get(&(off + 2))?.as_byte()? as u32) << 8
+            | (mem.contents.get(&(off + 3))?.as_byte()? as u32);
+        Some(p)
     }
 
     fn read_byte(mem: &Memory, off: u64) -> u8 {
@@ -267,6 +355,7 @@ impl State {
     }
 
     fn read32(&self, v: Value) -> Value {
+        // log::info!("read32: {:?}", v);
         let (mem, o) = self.addr_to_memoff(v);
         Value::U32(
             (Self::read_byte(mem, o) as u32) << 24
@@ -322,6 +411,32 @@ impl State {
 
     pub fn run_instruction(&mut self, ins: &Instruction, pc: u64) -> u64 {
         match ins {
+            Instruction::Syscall => {
+                let call = self.pop().to_offset();
+                match call {
+                    0 => {
+                        let v = self.pop();
+                        log::info!("hello computer: {:?}", v);
+                    },
+                    1 => {
+                        let v = self.pop();
+                        let (mem, base) = self.addr_to_memoff_mut(v);
+                        let mut pixels = [0; 640 * 400];
+                        for i in 0..(640 * 400) {
+                            if let Some(p) = State::read_u32_safe(mem, base + i * 4) {
+                                log::info!("pixel found at {}", i);
+                                pixels[i as usize] = p;
+                            }
+                        }
+                        self.graphics.render(pixels);
+                    },
+                    _ => {
+                        panic!("invalid syscall number: {}", call);
+                    }
+                }
+                pc + 1
+            },
+            Instruction::Nop => { pc + 1 },
             Instruction::Lit8(v) => {
                 self.push(Value::U8(*v));
                 pc + 1
@@ -379,6 +494,51 @@ impl State {
                 let v = self.pop();
                 let addr = self.pop();
                 self.write(v, addr);
+                pc + 1
+            },
+            Instruction::Not => {
+                let v = self.pop();
+                match v {
+                    Value::U8(x) => self.push(Value::U8((x == 0) as _)),
+                    Value::U16(x) => self.push(Value::U16((x == 0) as _)),
+                    Value::U32(x) => self.push(Value::U32((x == 0) as _)),
+                    Value::U64(x) => self.push(Value::U64((x == 0) as _)),
+                    _ => panic!("attempted to negate non-integer: {:?}", v),
+                }
+                pc + 1
+            },
+            Instruction::Equal => {
+                let x = self.pop();
+                let y = self.pop();
+                let v = match (x, y) {
+                    (a@Value::GlobalOffset(_), b)
+                        | (a, b@Value::GlobalOffset(_))
+                        | (a@Value::LocalOffset(_), b)
+                        | (a, b@Value::LocalOffset(_))
+                        | (a@Value::PC(_), b)
+                        | (a, b@Value::PC(_))
+                        => Value::U8((a == b) as _),
+                    (u, v) => {
+                        let size = IntegerSize::max(&u.to_integer_size(), &v.to_integer_size());
+                        Value::U8((u.to_offset() == v.to_offset()) as _)
+                    }
+                };
+                self.push(v);
+                pc + 1
+            },
+            Instruction::Less => {
+                let y = self.pop();
+                let x = self.pop();
+                let v = match (x, y) {
+                    (Value::GlobalOffset(a), Value::GlobalOffset(b)) => Value::U8((a < b) as _),
+                    (Value::LocalOffset(a), Value::LocalOffset(b)) => Value::U8((a < b) as _),
+                    (Value::PC(a), Value::PC(b)) => Value::U8((a < b) as _),
+                    (u, v) => {
+                        let size = IntegerSize::max(&u.to_integer_size(), &v.to_integer_size());
+                        Value::U8((u.to_offset() < v.to_offset()) as _)
+                    }
+                };
+                self.push(v);
                 pc + 1
             },
             Instruction::Add => {
@@ -520,6 +680,7 @@ impl State {
             Instruction::JumpIf => {
                 let c = self.pop();
                 let mpc = self.pop();
+                // log::info!("jumpif: {:?} {:?}", c, mpc);
                 if c.to_offset() != 0 {
                     if let Value::PC(x) = mpc {
                         x
@@ -577,6 +738,13 @@ impl Program {
         } else { false }
     }
     pub fn run(&mut self, vm: &mut State) {
-        while self.step(vm) {}
+        'running: while self.step(vm) { // todo: polling events here may be too slow
+            for event in vm.graphics.event_pump.poll_iter() {
+                match event {
+                    sdl2::event::Event::Quit {..} => { break 'running },
+                    _ => {},
+                }
+            }
+        }
     }
 }

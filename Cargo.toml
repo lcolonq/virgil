@@ -12,3 +12,4 @@ serde_json = "*"
 image = "*"
 pico-args = "*"
 lang-c = "*"
+sdl2 = {version = "*", features = ["image"]}

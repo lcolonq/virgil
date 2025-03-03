@@ -1,6 +1,7 @@
 mod analyze;
 mod vm;
 mod compiler;
+mod video;
 
 use anyhow::*;
 
@@ -16,6 +17,9 @@ fn main() -> Result<()> {
             },
             "frequencies" => {
                 analyze::frequencies();
+            },
+            "video" => {
+                video::video();
             },
             "vm" => {
                 let mut st = vm::State::new();
@@ -48,10 +52,11 @@ fn main() -> Result<()> {
                 log::info!("{:?}", t);
                 let mut comp = compiler::State::new();
                 comp.load(&path);
-                log::info!("{:?}", comp.instructions);
+                let (entry, ins) = comp.finalize();
+                log::info!("{:#?}", ins);
                 let mut vm = vm::State::new();
-                let mut prog = vm::Program::new(comp.instructions);
-                prog.pc = *comp.functions.get("main").expect("no main function");
+                let mut prog = vm::Program::new(ins);
+                prog.pc = entry;
                 prog.run(&mut vm);
             },
             _ => {},

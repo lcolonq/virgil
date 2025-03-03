@@ -72,9 +72,9 @@ pub fn analyze() {
 
 pub fn frequencies() {
     let res = Results::load();
-    for pat in 0..=255 {
-        let occs = res.patterns.get(&pat).expect("failed to find pattern");
-        // println!("{:#04x} {}", pat, (occs.len() as f32) / 6574.0);
-        println!("{:#04x} {}", pat, occs.len());
+    let mut occcounts: Vec<(u8, usize)> = res.patterns.iter().map(|(i, x)| (*i, x.len())).collect();
+    occcounts.sort_by_key(|(_, x)| *x);
+    for (pat, oc) in occcounts {
+        println!("{:#04x} {}", pat, oc);
     }
 }
