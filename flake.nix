@@ -80,7 +80,14 @@
               pkgs.rust-analyzer
               pkgs.glxinfo
               pkgs.cmake
+              pkgs.xxd
+
+              # for doomgeneric testing
+              pkgs.clang
+              pkgs.SDL2
+              pkgs.SDL2_mixer
             ];
+            NIX_HARDENING_ENABLE = "";
             LD_LIBRARY_PATH = "$LD_LIBRARY_PATH:${
               pkgs.lib.makeLibraryPath [
                 pkgs.xorg.libX11 

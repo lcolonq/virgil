@@ -4,12 +4,19 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-anyhow = "*"
-log = "*"
-env_logger = "*"
-serde = {version = "*", features = ["derive"]}
-serde_json = "*"
-image = "*"
-pico-args = "*"
-lang-c = "*"
-sdl2 = {version = "*", features = ["image"]}
+teleia = {path = "../teleia/"} # engine
+tokio = { version = "*", features = ["full"] } # async runtime
+clap = { version = "*", features = ["cargo"] } # cli arg parsing
+glam = {version = "*", features = ["serde"]} # linear algebra
+bitflags = "*" # C-style bitwise flags
+rand = "*" # rng
+log = "*" # logging
+env_logger = "*" # logging backend
+lazy_static = "*" # global constants
+bimap = {version = "*", features = ["serde"]} # bijective maps
+strum = {version = "*", features = ["derive"]} # utility macros for enums
+serde = {version = "*", features = ["derive"]} # serialization
+serde_json = "*" # json serialization
+anyhow = "*" # error handling
+lang-c = "*" # C parser
+image = "*" # image format loaders

@@ -201,62 +201,7 @@ impl Frame {
     }
 }
 
-pub struct Graphics {
-    sdl: sdl2::Sdl,
-    video: sdl2::VideoSubsystem,
-    // window: sdl2::video::Window,
-    canvas: sdl2::render::Canvas<sdl2::video::Window>,
-    event_pump: sdl2::EventPump,
-    texture_creator: sdl2::render::TextureCreator<sdl2::video::WindowContext>,
-}
-
-impl Graphics {
-    pub fn new() -> Self {
-        let sdl = sdl2::init().expect("failed to initialize sdl2");
-        let video = sdl.video().expect("failed to initialize video");
-        let window = video.window("bad apple :3", 800, 600).build().expect("failed to open window");
-        let mut canvas = window.into_canvas()
-            // .accelerated()
-            .build().expect("failed to initialize canvas");
-        sdl2::hint::set("SDL_RENDER_LOGICAL_SIZE_MODE", "letterbox");
-        canvas.set_logical_size(640, 400).expect("failed to set logical size");
-        let event_pump = sdl.event_pump().expect("failed to initialize event pump");
-        let texture_creator = canvas.texture_creator();
-        Self {
-            sdl,
-            video,
-            // window,
-            canvas,
-            event_pump,
-            texture_creator,
-        }
-    }
-
-    pub fn render(&mut self, v: [u32; 640 * 400]) {
-        let pixels: Vec<u8> = v.iter().flat_map(|x| x.to_be_bytes()).collect();
-        let mut frame = self.texture_creator.create_texture(
-            None, 
-            sdl2::render::TextureAccess::Streaming,
-            640,
-            400,
-        ).expect("failed to create texture");
-        frame.update(
-            None,
-            &pixels,
-            640 * 400
-        ).expect("failed to update texture");
-        self.canvas.set_draw_color(sdl2::pixels::Color::RGB(0, 0, 0));
-        self.canvas.clear();
-        self.canvas.set_draw_color(sdl2::pixels::Color::RGB(30, 30, 30));
-        self.canvas.fill_rect(None).unwrap();
-        self.canvas.set_draw_color(sdl2::pixels::Color::RGB(0, 255, 0));
-        self.canvas.draw_rect(sdl2::rect::Rect::new(10, 20, 20, 10)).unwrap();
-        self.canvas.present();
-    }
-}
-
 pub struct State {
-    pub graphics: Graphics,
     pub stack: Vec<Value>,
     pub globals: Memory,
     pub control: Vec<Frame>,
@@ -265,7 +210,6 @@ pub struct State {
 impl State {
     pub fn new() -> Self {
         Self {
-            graphics: Graphics::new(),
             stack: Vec::new(),
             globals: Memory::new(),
             control: vec![Frame::new(0x1337)],
@@ -305,7 +249,7 @@ impl State {
     }
 
     fn write(&mut self, v: Value, addr: Value) {
-        // log::info!("write: {:?}", v);
+        log::info!("write {:?} to {:?}", v, addr);
         let (mem, o) = self.addr_to_memoff_mut(addr);
         let mvs = v.to_memvalues();
         for (i, mv) in mvs.iter().enumerate() {
@@ -428,7 +372,6 @@ impl State {
                                 pixels[i as usize] = p;
                             }
                         }
-                        self.graphics.render(pixels);
                     },
                     _ => {
                         panic!("invalid syscall number: {}", call);
@@ -660,6 +603,7 @@ impl State {
                 let x = self.pop();
                 let y = self.pop();
                 let z = self.pop();
+                log::info!("rotating! {:?} {:?} {:?}", x, y, z);
                 self.push(x);
                 self.push(z);
                 self.push(y);
@@ -738,13 +682,6 @@ impl Program {
         } else { false }
     }
     pub fn run(&mut self, vm: &mut State) {
-        'running: while self.step(vm) { // todo: polling events here may be too slow
-            for event in vm.graphics.event_pump.poll_iter() {
-                match event {
-                    sdl2::event::Event::Quit {..} => { break 'running },
-                    _ => {},
-                }
-            }
-        }
+        while self.step (vm) {};
     }
 }

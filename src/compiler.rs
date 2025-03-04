@@ -338,7 +338,7 @@ impl State {
             ast::Statement::Expression(mn) => {
                 if let Some(n) = mn {
                     self.compile_expression(n.node);
-                    // self.ins.tructions().push(vm::Instruction::Dump);
+                    self.ins.tructions().push(vm::Instruction::Dump);
                 }
             },
             ast::Statement::Return(me) => {
