@@ -23,6 +23,10 @@ typedef void *va_list;
 #define EISDIR 17
 FILE *stdout = (FILE *) 0;
 FILE *stderr = (FILE *) 1;
+#define INT_MAX 2147483647
+#define INT_MIN -2147483648
+#define SHRT_MAX 32767
+#define SHRT_MIN -32768
 #endif
 
 #include "wad.h"

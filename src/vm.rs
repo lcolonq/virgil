@@ -98,6 +98,7 @@ impl IntegerSize {
 pub enum MemValue {
     LocalOffset(u64),
     GlobalOffset(u64),
+    HeapOffset(u64, u64),
     PC(u64),
     U8(u8),
 }
@@ -116,6 +117,7 @@ pub enum Value {
     Empty,
     LocalOffset(u64),
     GlobalOffset(u64),
+    HeapOffset(u64, u64),
     PC(u64),
     U8(u8),
     U16(u16),
@@ -129,6 +131,7 @@ impl Value {
             Value::Empty => vec![],
             Value::GlobalOffset(x) => vec![MemValue::GlobalOffset(*x)],
             Value::LocalOffset(x) => vec![MemValue::LocalOffset(*x)],
+            Value::HeapOffset(id, x) => vec![MemValue::HeapOffset(*id, *x)],
             Value::PC(x) => vec![MemValue::PC(*x)],
             Value::U8(x) => vec![MemValue::U8(*x)],
             Value::U16(x) => vec![
@@ -201,8 +204,13 @@ impl Frame {
     }
 }
 
+pub struct Allocation {
+    pub mem: Memory,
+}
+
 pub struct State {
     pub stack: Vec<Value>,
+    pub heap: Vec<Allocation>,
     pub globals: Memory,
     pub control: Vec<Frame>,
 }
@@ -211,6 +219,7 @@ impl State {
     pub fn new() -> Self {
         Self {
             stack: Vec::new(),
+            heap: Vec::new(),
             globals: Memory::new(),
             control: vec![Frame::new(0x1337)],
         }
@@ -222,6 +231,13 @@ impl State {
 
     fn push(&mut self, v: Value) {
         self.stack.push(v);
+    }
+
+    fn malloc(&mut self, _size: u64) -> Value {
+        self.heap.push(Allocation {
+            mem: Memory::new(),
+        });
+        Value::HeapOffset((self.heap.len() - 1) as u64, 0)
     }
 
     fn frame(&self) -> &Frame {
@@ -236,6 +252,11 @@ impl State {
         match v {
             Value::GlobalOffset(o) => (&self.globals, o),
             Value::LocalOffset(o) => (&self.frame().locals, o),
+            Value::HeapOffset(id, o) => if let Some(a) = self.heap.get(id as usize) {
+                (&a.mem, o)
+            } else {
+                panic!("heap address refers to invalid allocation: {:?}", v)
+            },
             _ => panic!("value is not address: {:?}", v),
         }
     }
@@ -244,6 +265,11 @@ impl State {
         match v {
             Value::GlobalOffset(o) => (&mut self.globals, o),
             Value::LocalOffset(o) => (&mut self.frame_mut().locals, o),
+            Value::HeapOffset(id, o) => if let Some(a) = self.heap.get_mut(id as usize) {
+                (&mut a.mem, o)
+            } else {
+                panic!("heap address refers to invalid allocation: {:?}", v)
+            },
             _ => panic!("value is not address: {:?}", v),
         }
     }
@@ -272,6 +298,18 @@ impl State {
             MemValue::U8(x) => *x,
             _ => panic!("tried to read address as 8 bits: {:?}", v),
         }
+    }
+
+    fn read_string(mem: &Memory, off: u64) -> String {
+        let mut buf = Vec::new();
+        let mut i = off;
+        loop {
+            let c = Self::read_byte(mem, i);
+            if c == 0 { break; }
+            buf.push(c);
+            i += 1;
+        }
+        String::from_utf8(buf).expect("invalid utf-8 string")
     }
 
     fn read_addr(&self, v: Value) -> Value {
@@ -358,11 +396,11 @@ impl State {
             Instruction::Syscall => {
                 let call = self.pop().to_offset();
                 match call {
-                    0 => {
+                    0 => { // debug
                         let v = self.pop();
                         log::info!("hello computer: {:?}", v);
                     },
-                    1 => {
+                    1 => { // pixel
                         let v = self.pop();
                         let (mem, base) = self.addr_to_memoff_mut(v);
                         let mut pixels = [0; 640 * 400];
@@ -372,6 +410,17 @@ impl State {
                                 pixels[i as usize] = p;
                             }
                         }
+                    },
+                    2 => { // malloc
+                        let sz = self.pop().to_offset();
+                        let ret = self.malloc(sz);
+                        self.push(ret);
+                    },
+                    3 => { // puts
+                        let msg_addr = self.pop();
+                        let (mem, o) = self.addr_to_memoff(msg_addr);
+                        let s = Self::read_string(mem, o);
+                        log::info!("puts: {}", s);
                     },
                     _ => {
                         panic!("invalid syscall number: {}", call);

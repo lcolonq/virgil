@@ -10,7 +10,7 @@ doomsdl2: all.c wad.h
 	$(CC) $(CFLAGS) $(SDL_CFLAGS) $(LDFLAGS) $< doomgeneric/doomgeneric_sdl.c -o $@ -lm -lc $(SDL_LIBS)
 
 all_pp.c: all.c wad.h
-	$(CC) $(CFLAGS) -nostdlib -nostdinc -E $< -o $@
+	$(CC) $(CFLAGS) -nostdlib -nostdinc -P -E $< -o $@
 
 all.c: $(SRCS)
 	cat $^ >$@

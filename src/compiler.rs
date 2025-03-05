@@ -88,6 +88,7 @@ pub struct State {
     pub ins: Instructions,
     pub block_scopes: Vec<Scope>,
     pub breakables: Vec<Breakable>,
+    pub typedefs: HashMap<String, Type>,
 }
 
 fn declarator_identifier(d: &ast::Declarator) -> String {
@@ -136,6 +137,7 @@ impl State {
             globals: Scope { offset: 0, entries: HashMap::new() },
             block_scopes: Vec::new(),
             breakables: Vec::new(),
+            typedefs: HashMap::new(),
         }
     }
 
@@ -261,11 +263,14 @@ impl State {
     }
 
     fn compile_declaration(&mut self, d: ast::Declaration) {
-        let tys = if let ast::DeclarationSpecifier::TypeSpecifier(t) = &d.specifiers[0].node {
-            &t.node
-        } else {
-            panic!("non-type specifier found")
-        };
+        let mut mtys = None;
+        for s in d.specifiers.iter() {
+            if let ast::DeclarationSpecifier::TypeSpecifier(t) = &s.node {
+                mtys = Some(&t.node);
+                break;
+            }
+        }
+        let tys = mtys.expect("failed to find type in declaration");
         let ty = Type::from_specifier(tys);
         let sz = self.sizeof(&ty);
         let (scope, base, init) = if let Some(l) = self.block_scopes.last_mut() {
@@ -274,6 +279,7 @@ impl State {
             (&mut self.globals, vm::Instruction::GlobalAddr, true)
         };
         let mut offset = scope.offset;
+        scope.offset = offset;
         let entries: Vec<(String, u64, Option<ast::Expression>)> = d.declarators.iter().map(|n| {
             let nm = declarator_identifier(&n.node.declarator.node);
             let oexp = initdeclarator_expression(&n.node);
@@ -281,7 +287,17 @@ impl State {
             offset += sz;
             ret
         }).collect();
-        scope.offset = offset;
+        if let ast::DeclarationSpecifier::StorageClass(s) = &d.specifiers[0].node {
+            match s.node {
+                ast::StorageClassSpecifier::Typedef => {
+                    for (nm, _, _) in entries {
+                        self.typedefs.insert(nm.clone(), ty.clone());
+                    }
+                    return;
+                },
+                _ => {}
+            }
+        }
         for (nm, off, _oexp) in &entries {
             scope.entries.insert(nm.clone(), Entry { offset: *off, ty: ty.clone() });
         }
@@ -455,12 +471,7 @@ impl State {
                     self.compile_expression(e.node);
                 }
                 match &ce.node.callee.node {
-                    ast::Expression::Identifier(i) if i.node.name == "log" => {
-                        self.ins.tructions().push(vm::Instruction::Lit64(0));
-                        self.ins.tructions().push(vm::Instruction::Syscall);
-                    },
-                    ast::Expression::Identifier(i) if i.node.name == "render" => {
-                        self.ins.tructions().push(vm::Instruction::Lit64(1));
+                    ast::Expression::Identifier(i) if i.node.name == "syscall" => {
                         self.ins.tructions().push(vm::Instruction::Syscall);
                     },
                     _ => {
