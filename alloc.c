@@ -1,15 +1,17 @@
 typedef unsigned long size_t;
 
 void *malloc(size_t n) {
-    return syscall(2, n);
+    void *ret = 0;
+    syscall(2, n, &ret);
+    return ret;
 }
 
 void puts(char *s) {
-    return syscall(3, s);
+    syscall(3, s);
 }
 
 int main() {
-    int *test = malloc(5);
+    char *test = malloc(5);
     test[0] = 't';
     test[1] = 'e';
     test[2] = 's';

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap};
 
 #[derive(Debug, Clone)]
 pub enum Instruction {
@@ -96,7 +96,7 @@ impl IntegerSize {
 
 #[derive(Debug, Clone)]
 pub enum MemValue {
-    LocalOffset(u64),
+    LocalOffset(u64, u64),
     GlobalOffset(u64),
     HeapOffset(u64, u64),
     PC(u64),
@@ -115,7 +115,7 @@ impl MemValue {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Value {
     Empty,
-    LocalOffset(u64),
+    LocalOffset(u64, u64),
     GlobalOffset(u64),
     HeapOffset(u64, u64),
     PC(u64),
@@ -130,7 +130,7 @@ impl Value {
         match self {
             Value::Empty => vec![],
             Value::GlobalOffset(x) => vec![MemValue::GlobalOffset(*x)],
-            Value::LocalOffset(x) => vec![MemValue::LocalOffset(*x)],
+            Value::LocalOffset(f, x) => vec![MemValue::LocalOffset(*f, *x)],
             Value::HeapOffset(id, x) => vec![MemValue::HeapOffset(*id, *x)],
             Value::PC(x) => vec![MemValue::PC(*x)],
             Value::U8(x) => vec![MemValue::U8(*x)],
@@ -240,18 +240,17 @@ impl State {
         Value::HeapOffset((self.heap.len() - 1) as u64, 0)
     }
 
-    fn frame(&self) -> &Frame {
-        self.control.get(0).expect("control stack underflow")
+    fn frame(&self, f: u64) -> &Frame {
+        self.control.get(f as usize).expect("control stack underflow")
     }
-
-    fn frame_mut(&mut self) -> &mut Frame {
-        self.control.get_mut(0).expect("control stack underflow")
+    fn frame_mut(&mut self, f: u64) -> &mut Frame {
+        self.control.get_mut(f as usize).expect("control stack underflow")
     }
 
     fn addr_to_memoff<'a>(&'a self, v: Value) -> (&'a Memory, u64) {
         match v {
             Value::GlobalOffset(o) => (&self.globals, o),
-            Value::LocalOffset(o) => (&self.frame().locals, o),
+            Value::LocalOffset(f, o) => (&self.frame(f).locals, o),
             Value::HeapOffset(id, o) => if let Some(a) = self.heap.get(id as usize) {
                 (&a.mem, o)
             } else {
@@ -264,7 +263,7 @@ impl State {
     fn addr_to_memoff_mut<'a>(&'a mut self, v: Value) -> (&'a mut Memory, u64) {
         match v {
             Value::GlobalOffset(o) => (&mut self.globals, o),
-            Value::LocalOffset(o) => (&mut self.frame_mut().locals, o),
+            Value::LocalOffset(f, o) => (&mut self.frame_mut(f).locals, o),
             Value::HeapOffset(id, o) => if let Some(a) = self.heap.get_mut(id as usize) {
                 (&mut a.mem, o)
             } else {
@@ -316,8 +315,9 @@ impl State {
         let (mem, o) = self.addr_to_memoff(v);
         let v = mem.contents.get(&o).expect(&format!("failed to read unintialized memory: {:?}", o));
         match v {
-            MemValue::LocalOffset(x) => Value::LocalOffset(*x),
+            MemValue::LocalOffset(f, x) => Value::LocalOffset(*f, *x),
             MemValue::GlobalOffset(x) => Value::GlobalOffset(*x),
+            MemValue::HeapOffset(id, x) => Value::HeapOffset(*id, *x),
             MemValue::PC(x) => Value::PC(*x),
             _ => panic!("tried to read data as address: {:?}", v),
         }
@@ -395,6 +395,7 @@ impl State {
         match ins {
             Instruction::Syscall => {
                 let call = self.pop().to_offset();
+                log::info!("syscall: {}", call);
                 match call {
                     0 => { // debug
                         let v = self.pop();
@@ -413,8 +414,9 @@ impl State {
                     },
                     2 => { // malloc
                         let sz = self.pop().to_offset();
+                        let addr = self.pop();
                         let ret = self.malloc(sz);
-                        self.push(ret);
+                        self.write(ret, addr);
                     },
                     3 => { // puts
                         let msg_addr = self.pop();
@@ -450,7 +452,7 @@ impl State {
                 pc + 1
             },
             Instruction::LocalAddr => {
-                self.push(Value::LocalOffset(0));
+                self.push(Value::LocalOffset(self.control.len() as u64 - 1, 0));
                 pc + 1
             },
             Instruction::GlobalAddr => {
@@ -505,8 +507,10 @@ impl State {
                 let v = match (x, y) {
                     (a@Value::GlobalOffset(_), b)
                         | (a, b@Value::GlobalOffset(_))
-                        | (a@Value::LocalOffset(_), b)
-                        | (a, b@Value::LocalOffset(_))
+                        | (a@Value::LocalOffset(_, _), b)
+                        | (a, b@Value::LocalOffset(_, _))
+                        | (a@Value::HeapOffset(_, _), b)
+                        | (a, b@Value::HeapOffset(_, _))
                         | (a@Value::PC(_), b)
                         | (a, b@Value::PC(_))
                         => Value::U8((a == b) as _),
@@ -523,7 +527,8 @@ impl State {
                 let x = self.pop();
                 let v = match (x, y) {
                     (Value::GlobalOffset(a), Value::GlobalOffset(b)) => Value::U8((a < b) as _),
-                    (Value::LocalOffset(a), Value::LocalOffset(b)) => Value::U8((a < b) as _),
+                    (Value::LocalOffset(f0, a), Value::LocalOffset(f1, b)) if f0 == f1 => Value::U8((a < b) as _),
+                    (Value::HeapOffset(id0, a), Value::HeapOffset(id1, b)) if id0 == id1 => Value::U8((a < b) as _),
                     (Value::PC(a), Value::PC(b)) => Value::U8((a < b) as _),
                     (u, v) => {
                         let size = IntegerSize::max(&u.to_integer_size(), &v.to_integer_size());
@@ -538,7 +543,8 @@ impl State {
                 let y = self.pop();
                 let v = match (y, x) {
                     (Value::GlobalOffset(b), off) => Value::GlobalOffset(b + off.to_offset()),
-                    (Value::LocalOffset(b), off) => Value::LocalOffset(b + off.to_offset()),
+                    (Value::LocalOffset(f, b), off) => Value::LocalOffset(f, b + off.to_offset()),
+                    (Value::HeapOffset(id, b), off) => Value::HeapOffset(id, b + off.to_offset()),
                     (Value::PC(b), off) => Value::PC(b + off.to_offset()),
                     (u, v) => {
                         let size = IntegerSize::max(&u.to_integer_size(), &v.to_integer_size());
@@ -553,7 +559,8 @@ impl State {
                 let y = self.pop();
                 let v = match (y, x) {
                     (Value::GlobalOffset(b), off) => Value::GlobalOffset(b - off.to_offset()),
-                    (Value::LocalOffset(b), off) => Value::LocalOffset(b - off.to_offset()),
+                    (Value::LocalOffset(f, b), off) => Value::LocalOffset(f, b - off.to_offset()),
+                    (Value::HeapOffset(id, b), off) => Value::HeapOffset(id, b - off.to_offset()),
                     (Value::PC(b), off) => Value::PC(b - off.to_offset()),
                     (u, v) => {
                         let size = IntegerSize::max(&u.to_integer_size(), &v.to_integer_size());
@@ -568,7 +575,8 @@ impl State {
                 let y = self.pop();
                 let v = match (y, x) {
                     (Value::GlobalOffset(b), off) => Value::GlobalOffset(b * off.to_offset()),
-                    (Value::LocalOffset(b), off) => Value::LocalOffset(b * off.to_offset()),
+                    (Value::LocalOffset(f, b), off) => Value::LocalOffset(f, b * off.to_offset()),
+                    (Value::HeapOffset(id, b), off) => Value::HeapOffset(id, b * off.to_offset()),
                     (Value::PC(b), off) => Value::PC(b * off.to_offset()),
                     (u, v) => {
                         let size = IntegerSize::max(&u.to_integer_size(), &v.to_integer_size());
@@ -583,7 +591,8 @@ impl State {
                 let y = self.pop();
                 let v = match (y, x) {
                     (Value::GlobalOffset(b), off) => Value::GlobalOffset(b / off.to_offset()),
-                    (Value::LocalOffset(b), off) => Value::LocalOffset(b / off.to_offset()),
+                    (Value::LocalOffset(f, b), off) => Value::LocalOffset(f, b / off.to_offset()),
+                    (Value::HeapOffset(id, b), off) => Value::HeapOffset(id, b / off.to_offset()),
                     (Value::PC(b), off) => Value::PC(b * off.to_offset()),
                     (u, v) => {
                         let size = IntegerSize::max(&u.to_integer_size(), &v.to_integer_size());
@@ -598,7 +607,8 @@ impl State {
                 let y = self.pop();
                 let v = match (y, x) {
                     (Value::GlobalOffset(b), off) => Value::GlobalOffset(b % off.to_offset()),
-                    (Value::LocalOffset(b), off) => Value::LocalOffset(b % off.to_offset()),
+                    (Value::LocalOffset(f, b), off) => Value::LocalOffset(f, b % off.to_offset()),
+                    (Value::HeapOffset(id, b), off) => Value::HeapOffset(id, b % off.to_offset()),
                     (Value::PC(b), off) => Value::PC(b % off.to_offset()),
                     (u, v) => {
                         let size = IntegerSize::max(&u.to_integer_size(), &v.to_integer_size());

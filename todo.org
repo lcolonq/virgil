@@ -1,0 +1,7 @@
+* Things that need to be done
+- https://github.com/c-testsuite/c-testsuite
+- extern keyword (ignore)
+- structs and enums, typedefs with anonymous structs and enums
+- all missing operators
+- floating point
+- for loops

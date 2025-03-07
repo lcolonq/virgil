@@ -3,9 +3,12 @@ use crate::vm;
 use std::collections::HashMap;
 use lang_c::ast as ast;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Type {
     Void,
+    Function(Box<Type>), // function pointer with return type
+    Pointer(Box<Type>),
+    Array(u64, Box<Type>), // array with length
     Char,
     Short,
     Int,
@@ -18,7 +21,7 @@ pub enum Type {
 }
 
 impl Type {
-    pub fn from_specifier(spec: &lang_c::ast::TypeSpecifier) -> Self {
+    pub fn from_specifier(vm: &State, spec: &lang_c::ast::TypeSpecifier) -> Self {
         match spec {
             ast::TypeSpecifier::Void => Self::Void,
             ast::TypeSpecifier::Char => Self::Char,
@@ -30,13 +33,18 @@ impl Type {
             ast::TypeSpecifier::Signed => Self::Signed,
             ast::TypeSpecifier::Unsigned => Self::Unsigned,
             ast::TypeSpecifier::Bool => Self::Bool,
+            ast::TypeSpecifier::TypedefName(nm) =>
+                vm.typedefs.get(&nm.node.name).expect("could not find typedef").clone(),
             _ => panic!("unsupported type"),
         }
     }
 
-    pub fn sizeof(&self, _vm: &State) -> u64 {
+    pub fn sizeof(&self, vm: &State) -> u64 {
         match self {
             Self::Void => 0,
+            Self::Function(_) => 1,
+            Self::Pointer(_) => 1,
+            Self::Array(len, ty) => len * ty.sizeof(vm),
             Self::Char => 1,
             Self::Short => 2,
             Self::Int => 4,
@@ -55,6 +63,12 @@ impl Type {
 pub struct Entry {
     pub offset: u64,
     pub ty: Type,
+}
+
+#[derive(Debug, Clone)]
+pub struct Function {
+    pub offset: u64,
+    pub ret: Type,
 }
 
 pub struct Scope {
@@ -83,7 +97,7 @@ impl Instructions {
 }
 
 pub struct State {
-    pub functions: HashMap<String, u64>,
+    pub functions: HashMap<String, Function>,
     pub globals: Scope,
     pub ins: Instructions,
     pub block_scopes: Vec<Scope>,
@@ -91,20 +105,38 @@ pub struct State {
     pub typedefs: HashMap<String, Type>,
 }
 
-fn declarator_identifier(d: &ast::Declarator) -> String {
-    if let ast::DeclaratorKind::Identifier(i) = &d.kind.node {
+fn extract_declarator(d: &ast::Declarator, base: &Type) -> (String, Type) {
+    let nm = if let ast::DeclaratorKind::Identifier(i) = &d.kind.node {
         i.node.name.clone()
     } else {
         panic!("failed to extract name of definition")
+    };
+    let mut ty = base.clone();
+    for x in &d.derived {
+        match &x.node {
+            ast::DerivedDeclarator::Pointer(_) => {
+                ty = Type::Pointer(Box::new(ty));
+            },
+            ast::DerivedDeclarator::Array(l) => {
+                if let ast::ArraySize::VariableExpression(bve) = &l.node.size {
+                    if let ast::Expression::Constant(c) = &bve.node {
+                        if let ast::Constant::Integer(i) = &c.node {
+                            let len = i.number.parse().expect("failed to parse array size constant");
+                            ty = Type::Array(len, Box::new(ty));
+                        } else {
+                            panic!("array size constant is not an integer");
+                        }
+                    } else {
+                            panic!("array size expression is not constant");
+                    }
+                } else {
+                    panic!("array type does not have size");
+                }
+            },
+            _ => {},
+        }
     }
-}
-
-fn initdeclarator_expression(d: &ast::InitDeclarator) -> Option<ast::Expression> {
-    let i = d.initializer.as_ref()?;
-    match &i.node {
-        ast::Initializer::Expression(e) => Some(e.node.clone()),
-        _ => None,
-    }
+    (nm, ty)
 }
 
 fn binop_has_lvalue(b: &ast::BinaryOperator) -> bool {
@@ -142,12 +174,12 @@ impl State {
     }
 
     pub fn finalize(&self) -> (u64, Vec<vm::Instruction>) {
-        let main = *self.functions.get("main").expect("no main function");
+        let main = self.functions.get("main").expect("no main function");
         let entry = self.ins.instructions.len();
         let mut ins = self.ins.instructions.clone();
         ins.append(&mut self.ins.instructions_init.clone());
         ins.push(vm::Instruction::Program);
-        ins.push(vm::Instruction::Lit64(main));
+        ins.push(vm::Instruction::Lit64(main.offset));
         ins.push(vm::Instruction::Add);
         ins.push(vm::Instruction::Call);
         (entry as _, ins)
@@ -222,29 +254,39 @@ impl State {
         }
         if let Some(f) = self.functions.get(nm) {
             self.ins.tructions().push(vm::Instruction::Program);
-            self.ins.tructions().push(vm::Instruction::Lit64(*f));
+            self.ins.tructions().push(vm::Instruction::Lit64(f.offset));
             self.ins.tructions().push(vm::Instruction::Add);
-            return Type::Char; // TODO
+            return Type::Function(Box::new(f.ret.clone()));
         }
         panic!("failed to find variable: {:?}", nm)
     }
 
     fn gen_read_type(&mut self, ty: &Type) {
-        match self.sizeof(ty) {
-            1 => self.ins.tructions().push(vm::Instruction::Read8),
-            2 => self.ins.tructions().push(vm::Instruction::Read16),
-            4 => self.ins.tructions().push(vm::Instruction::Read32),
-            8 => self.ins.tructions().push(vm::Instruction::Read64),
-            sz => panic!("cannot read variable with size: {:?}", sz),
+        if let Type::Pointer(_) = ty {
+            self.ins.tructions().push(vm::Instruction::ReadAddr)
+        } else if let Type::Array(_, _) = ty {
+            // don't need a read - a "raw" array variable is just the address!
+            // self.ins.tructions().push(vm::Instruction::ReadAddr)
+        } else {
+            match self.sizeof(ty) {
+                1 => self.ins.tructions().push(vm::Instruction::Read8),
+                2 => self.ins.tructions().push(vm::Instruction::Read16),
+                4 => self.ins.tructions().push(vm::Instruction::Read32),
+                8 => self.ins.tructions().push(vm::Instruction::Read64),
+                sz => panic!("cannot read variable with size: {:?}", sz),
+            }
         }
     }
 
     fn gen_trunc_type(&mut self, ty: &Type) {
-        match self.sizeof(ty) {
-            1 => self.ins.tructions().push(vm::Instruction::Trunc8),
-            2 => self.ins.tructions().push(vm::Instruction::Trunc16),
-            4 => self.ins.tructions().push(vm::Instruction::Trunc32),
-            _ => {},
+        if let Type::Pointer(_) = ty {
+        } else {
+            match self.sizeof(ty) {
+                1 => self.ins.tructions().push(vm::Instruction::Trunc8),
+                2 => self.ins.tructions().push(vm::Instruction::Trunc16),
+                4 => self.ins.tructions().push(vm::Instruction::Trunc32),
+                _ => {},
+            }
         }
     }
 
@@ -271,26 +313,30 @@ impl State {
             }
         }
         let tys = mtys.expect("failed to find type in declaration");
-        let ty = Type::from_specifier(tys);
-        let sz = self.sizeof(&ty);
+        let basety = Type::from_specifier(self, tys);
+        let mut offset = if let Some(l) = self.block_scopes.last() {
+            l.offset
+        } else {
+            self.globals.offset
+        };
+        let entries: Vec<(String, u64, Type, Option<ast::Initializer>)> = d.declarators.into_iter().map(|n| {
+            let (nm, ty) = extract_declarator(&n.node.declarator.node, &basety);
+            let oi = n.node.initializer.map(|i| i.node);
+            let sz = self.sizeof(&ty);
+            let ret = (nm, offset, ty, oi);
+            offset += sz;
+            ret
+        }).collect();
         let (scope, base, init) = if let Some(l) = self.block_scopes.last_mut() {
             (l, vm::Instruction::LocalAddr, false)
         } else {
             (&mut self.globals, vm::Instruction::GlobalAddr, true)
         };
-        let mut offset = scope.offset;
         scope.offset = offset;
-        let entries: Vec<(String, u64, Option<ast::Expression>)> = d.declarators.iter().map(|n| {
-            let nm = declarator_identifier(&n.node.declarator.node);
-            let oexp = initdeclarator_expression(&n.node);
-            let ret = (nm, offset, oexp);
-            offset += sz;
-            ret
-        }).collect();
         if let ast::DeclarationSpecifier::StorageClass(s) = &d.specifiers[0].node {
             match s.node {
                 ast::StorageClassSpecifier::Typedef => {
-                    for (nm, _, _) in entries {
+                    for (nm, _, ty, _) in entries {
                         self.typedefs.insert(nm.clone(), ty.clone());
                     }
                     return;
@@ -298,36 +344,77 @@ impl State {
                 _ => {}
             }
         }
-        for (nm, off, _oexp) in &entries {
+        for (nm, off, ty, _oi) in &entries {
             scope.entries.insert(nm.clone(), Entry { offset: *off, ty: ty.clone() });
         }
-        for (_nm, off, oexp) in &entries {
-            if let Some(exp) = oexp {
-                self.ins.emit_init = init;
-                self.ins.tructions().push(base.clone());
-                self.ins.tructions().push(vm::Instruction::Lit64(*off));
+        self.ins.emit_init = init;
+        for (_nm, off, ty, oi) in entries {
+            if let Some(i) = oi {
+                self.compile_initializer(ty, base.clone(), off, i);
+            }
+        }
+        self.ins.emit_init = false;
+    }
+
+    fn compile_initializer(&mut self, ty: Type, base: vm::Instruction, off: u64, i: ast::Initializer) {
+        match i {
+            ast::Initializer::Expression(exp) => {
+                self.ins.tructions().push(base);
+                self.ins.tructions().push(vm::Instruction::Lit64(off));
                 self.ins.tructions().push(vm::Instruction::Add);
-                self.compile_expression(exp.clone());
+                self.compile_expression(exp.node.clone());
                 self.gen_trunc_type(&ty);
                 self.ins.tructions().push(vm::Instruction::Write);
-                self.ins.emit_init = false;
-            }
+            },
+            ast::Initializer::List(il) => {
+                match ty {
+                    Type::Array(_, aty) => {
+                        let sz = self.sizeof(&aty);
+                        let mut o = off;
+                        for i in il {
+                            self.compile_initializer(*aty.clone(), base.clone(), o, i.node.initializer.node);
+                            o += sz;
+                        }
+                    }
+                    _ => panic!("list initializer for invalid type"),
+                }
+            },
         }
     }
 
     fn compile_definition(&mut self, d: ast::FunctionDefinition) {
-        let name = declarator_identifier(&d.declarator.node);
         let pc = self.pc();
-        self.functions.insert(name.clone(), pc);
+        let mut mtys = None;
+        for s in d.specifiers.iter() {
+            if let ast::DeclarationSpecifier::TypeSpecifier(t) = &s.node {
+                mtys = Some(&t.node);
+                break;
+            }
+        }
+        let tys = mtys.expect("failed to find return type in function definition");
+        let basety = Type::from_specifier(self, tys);
+        let (nm, ret) = extract_declarator(&d.declarator.node, &basety);
+        self.functions.insert(nm.clone(), Function {
+            offset: pc,
+            ret,
+        });
         let mut offset = 0;
-        let params: Vec<(String, Entry)> = if let ast::DerivedDeclarator::Function(f) = &d.declarator.node.derived[0].node {
+        let mut mfunc = None;
+        for decl in d.declarator.node.derived.iter() {
+            log::info!("node: {:?}", decl.node);
+            if let ast::DerivedDeclarator::Function(f) = &decl.node {
+                mfunc = Some(f);
+            }
+        }
+        let params: Vec<(String, Entry)> = if let Some(f) = mfunc {
             f.node.parameters.iter().map(|n| {
-                let nm = declarator_identifier(&n.node.declarator.as_ref().expect("missing parameter name").node);
-                let ty = if let ast::DeclarationSpecifier::TypeSpecifier(t) = &n.node.specifiers[0].node {
-                    Type::from_specifier(&t.node)
+                let decl = &n.node.declarator.as_ref().expect("missing parameter name").node;
+                let basety = if let ast::DeclarationSpecifier::TypeSpecifier(t) = &n.node.specifiers[0].node {
+                    Type::from_specifier(self, &t.node)
                 } else {
                     panic!("non-type specifier found")
                 };
+                let (nm, ty) = extract_declarator(decl, &basety);
                 let ret = (nm, Entry { offset, ty: ty.clone() });
                 offset += self.sizeof(&ty);
                 ret
@@ -336,7 +423,7 @@ impl State {
             Vec::new()
         };
         self.block_scopes.push(Scope { offset, entries: params.clone().into_iter().collect() });
-        for (_, p) in params.iter().rev() {
+        for (_, p) in params.iter() {
             self.ins.tructions().push(vm::Instruction::LocalAddr);
             self.ins.tructions().push(vm::Instruction::Lit64(p.offset));
             self.ins.tructions().push(vm::Instruction::Add);
@@ -353,13 +440,15 @@ impl State {
         match d {
             ast::Statement::Expression(mn) => {
                 if let Some(n) = mn {
-                    self.compile_expression(n.node);
-                    self.ins.tructions().push(vm::Instruction::Dump);
+                    let ty = self.compile_expression(n.node);
+                    if ty != Type::Void {
+                        self.ins.tructions().push(vm::Instruction::Dump);
+                    }
                 }
             },
             ast::Statement::Return(me) => {
                 if let Some(e) = me {
-                    self.compile_expression(e.node)
+                    self.compile_expression(e.node);
                 }
                 self.ins.tructions().push(vm::Instruction::Return);
             },
@@ -431,16 +520,36 @@ impl State {
     fn compile_expression_lvalue(&mut self, e: ast::Expression) -> Type {
         match e {
             ast::Expression::Identifier(i) => self.gen_push_var_addr(&i.node.name),
+            ast::Expression::UnaryOperator(uoe) => {
+                match uoe.node.operator.node {
+                    ast::UnaryOperator::Indirection => {
+                        match self.compile_expression(uoe.node.operand.node) {
+                            Type::Pointer(ty) => *ty,
+                            Type::Array(_, ty) => *ty,
+                            _ => {
+                                panic!("attempted to dereference non-pointer expression in lvalue");
+                            },
+                        }
+                    },
+                    uop => panic!("unsupported unary operator in lvalue context: {:?}", uop),
+                }
+            },
             ast::Expression::BinaryOperator(boe) => {
                 match boe.node.operator.node {
                     ast::BinaryOperator::Index => {
-                        let ty = self.compile_expression_lvalue(boe.node.lhs.node);
-                        let sz = ty.sizeof(self);
-                        self.compile_expression(boe.node.rhs.node);
-                        self.ins.tructions().push(vm::Instruction::Lit64(sz));
-                        self.ins.tructions().push(vm::Instruction::Mul);
-                        self.ins.tructions().push(vm::Instruction::Add);
-                        ty // todo maybe fucked
+                        match self.compile_expression(boe.node.lhs.node) {
+                            Type::Pointer(ty) | Type::Array(_, ty) => {
+                                let sz = ty.sizeof(self);
+                                self.compile_expression(boe.node.rhs.node);
+                                self.ins.tructions().push(vm::Instruction::Lit64(sz));
+                                self.ins.tructions().push(vm::Instruction::Mul);
+                                self.ins.tructions().push(vm::Instruction::Add);
+                                *ty
+                            },
+                            _ => {
+                                panic!("attempt to dereference non-pointer type")
+                            },
+                        }
                     },
                     bop => panic!("unsupported binary operator in lvalue context: {:?}", bop),
                 }
@@ -453,64 +562,136 @@ impl State {
     }
 
     // pushes a single result value to the stack
-    fn compile_expression(&mut self, e: ast::Expression) {
+    fn compile_expression(&mut self, e: ast::Expression) -> Type {
         match e {
             ast::Expression::Constant(c) => match c.node {
                 ast::Constant::Integer(i) => {
                     let val = i.number.parse().expect("failed to parse literal");
                     self.ins.tructions().push(vm::Instruction::Lit64(val));
+                    Type::Long
+                },
+                ast::Constant::Character(c) => {
+                    let val = c.chars().nth(1).expect("empty character literal");
+                    self.ins.tructions().push(vm::Instruction::Lit8(val as u8));
+                    Type::Char
                 },
                 co => panic!("unsupported literal: {:?}", co),
+            },
+            ast::Expression::StringLiteral(sl) => {
+                let mut full = String::new();
+                for bs in sl.node {
+                    let s = bs.replace("\\n", "\n").replace("\\r", "\r").replace("\\t", "\t").replace("\\\\", "\\").replace("\\\"", "\"");
+                    let mut cs = s.chars();
+                    cs.next(); cs.next_back(); // remove quotes
+                    full += cs.as_str()
+                }
+                full += "\0";
+                self.ins.emit_init = true;
+                let ret = self.globals.offset;
+                for c in full.chars() {
+                    self.ins.tructions().push(vm::Instruction::GlobalAddr);
+                    self.ins.tructions().push(vm::Instruction::Lit64(self.globals.offset));
+                    self.ins.tructions().push(vm::Instruction::Add);
+                    self.ins.tructions().push(vm::Instruction::Lit8(c as u8));
+                    self.ins.tructions().push(vm::Instruction::Write);
+                    self.globals.offset += 1;
+                }
+                self.ins.emit_init = false;
+                self.ins.tructions().push(vm::Instruction::GlobalAddr);
+                self.ins.tructions().push(vm::Instruction::Lit64(ret));
+                self.ins.tructions().push(vm::Instruction::Add);
+                Type::Pointer(Box::new(Type::Char))
             },
             ast::Expression::Identifier(i) => {
                 let ty = self.gen_push_var_addr(&i.node.name);
                 self.gen_read_type(&ty);
+                ty.clone()
             },
             ast::Expression::Call(ce) => {
-                for e in ce.node.arguments {
+                for e in ce.node.arguments.into_iter().rev() {
                     self.compile_expression(e.node);
                 }
                 match &ce.node.callee.node {
                     ast::Expression::Identifier(i) if i.node.name == "syscall" => {
                         self.ins.tructions().push(vm::Instruction::Syscall);
+                        Type::Void
                     },
                     _ => {
-                        self.compile_expression_lvalue(ce.node.callee.node);
+                        let ty = self.compile_expression_lvalue(ce.node.callee.node);
                         self.ins.tructions().push(vm::Instruction::Call);
+                        if let Type::Function(ret) = &ty {
+                            *ret.clone()
+                        } else {
+                            panic!("attempt to call non-function type");
+                        }
                     }
                 }
             },
             ast::Expression::UnaryOperator(uoe) => {
                 match uoe.node.operator.node {
                     ast::UnaryOperator::Address => {
-                        let _ = self.compile_expression_lvalue(uoe.node.operand.node);
+                        let ty = self.compile_expression_lvalue(uoe.node.operand.node);
+                        Type::Pointer(Box::new(ty))
                     },
-                    uop => panic!("unsupported binary operator (with lvalue): {:?}", uop),
+                    ast::UnaryOperator::Indirection => {
+                        match self.compile_expression(uoe.node.operand.node) {
+                            Type::Pointer(ty) => {
+                                self.gen_read_type(&ty);
+                                *ty
+                            },
+                            Type::Array(_, ty) => {
+                                self.gen_read_type(&ty);
+                                *ty
+                            },
+                            _ => {
+                                panic!("attempted to dereference non-pointer expression");
+                            },
+                        }
+                    },
+                    uop => panic!("unsupported unary operator (with lvalue): {:?}", uop),
                 }
             },
             ast::Expression::BinaryOperator(boe) => {
                 if binop_has_lvalue(&boe.node.operator.node) {
-                    let ty = self.compile_expression_lvalue(boe.node.lhs.node);
+                    let tl = self.compile_expression_lvalue(boe.node.lhs.node);
                     self.compile_expression(boe.node.rhs.node);
                     match boe.node.operator.node {
                         ast::BinaryOperator::Assign => {
-                            self.gen_trunc_type(&ty);
+                            self.gen_trunc_type(&tl);
                             self.ins.tructions().push(vm::Instruction::Dup);
                             self.ins.tructions().push(vm::Instruction::Rot);
-                            self.ins.tructions().push(vm::Instruction::Write)
+                            self.ins.tructions().push(vm::Instruction::Write);
+                            tl
                         },
                         ast::BinaryOperator::Index => {
-                            let sz = ty.sizeof(self);
-                            self.ins.tructions().push(vm::Instruction::Lit64(sz));
-                            self.ins.tructions().push(vm::Instruction::Mul);
-                            self.ins.tructions().push(vm::Instruction::Add);
-                            self.gen_read_type(&ty);
+                            match tl {
+                                Type::Pointer(ty) | Type::Array(_, ty) => {
+                                    let sz = self.sizeof(&ty);
+                                    self.ins.tructions().push(vm::Instruction::Lit64(sz));
+                                    self.ins.tructions().push(vm::Instruction::Mul);
+                                    self.ins.tructions().push(vm::Instruction::Add);
+                                    self.gen_read_type(&ty);
+                                    *ty
+                                },
+                                _ => panic!("attempted to index non-pointer"),
+                            }
                         },
                         bop => panic!("unsupported binary operator (with lvalue): {:?}", bop),
                     }
                 } else {
-                    self.compile_expression(boe.node.lhs.node);
-                    self.compile_expression(boe.node.rhs.node);
+                    let tl = self.compile_expression(boe.node.lhs.node);
+                    let tr = self.compile_expression(boe.node.rhs.node);
+                    match (&tl, &tr) {
+                        (Type::Pointer(pty), _)
+                            | (Type::Array(_, pty), _)
+                            | (_, Type::Pointer(pty))
+                            | (_, Type::Array(_, pty)) => {
+                                let sz = self.sizeof(&pty);
+                                self.ins.tructions().push(vm::Instruction::Lit64(sz));
+                                self.ins.tructions().push(vm::Instruction::Mul);
+                            },
+                        _ => {},
+                    }
                     match boe.node.operator.node {
                         ast::BinaryOperator::Plus => self.ins.tructions().push(vm::Instruction::Add),
                         ast::BinaryOperator::Minus => self.ins.tructions().push(vm::Instruction::Sub),
@@ -518,6 +699,8 @@ impl State {
                         ast::BinaryOperator::Less => self.ins.tructions().push(vm::Instruction::Less),
                         bop => panic!("unsupported binary operator (no lvalue): {:?}", bop),
                     }
+                    tl // TODO: actually pick the right type instead of The Left One
+
                 }
             },
             _ => panic!("unsupported expression: {:?}", e),
