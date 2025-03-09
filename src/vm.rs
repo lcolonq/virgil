@@ -94,7 +94,7 @@ impl IntegerSize {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MemValue {
     LocalOffset(u64, u64),
     GlobalOffset(u64),
@@ -176,7 +176,7 @@ impl Value {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Memory {
     pub contents: HashMap<u64, MemValue>
 }
@@ -476,6 +476,7 @@ impl State {
             },
             Instruction::Read32 => {
                 let addr = self.pop();
+                log::info!("read32: {:?}", addr);
                 self.push(self.read32(addr));
                 pc + 1
             },
@@ -695,6 +696,7 @@ impl State {
                 }
             },
             Instruction::Call => {
+                log::info!("call, stack is: {:?}", self.stack);
                 let t = self.pop();
                 if let Value::PC(x) = t {
                     self.control.push(Frame::new(pc + 1));

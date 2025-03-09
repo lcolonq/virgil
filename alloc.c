@@ -18,4 +18,5 @@ int main() {
     test[3] = 't';
     test[4] = 0;
     puts(test);
+    puts("hello computer");
 }

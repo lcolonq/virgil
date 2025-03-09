@@ -4,4 +4,3 @@
 - structs and enums, typedefs with anonymous structs and enums
 - all missing operators
 - floating point
-- for loops
