@@ -64,14 +64,11 @@ pub async fn main() -> Erm<()> {
             env_logger::Builder::new()
                 .filter(None, log::LevelFilter::Info)
                 .init();
+            install_error_handler();
             let path = cm.get_one::<String>("path").unwrap();
-            let config = lang_c::driver::Config::default();
-            let t = lang_c::driver::parse(&config, &path).unwrap();
-            log::info!("{:?}", t);
             let mut comp = compiler::State::new();
-            comp.load(&path);
-            let (entry, ins) = comp.finalize();
-            log::info!("{:#?}", ins);
+            comp.load(&path)?;
+            let (entry, ins) = comp.finalize()?;
             let mut vm = vm::State::new();
             let mut prog = vm::Program::new(ins);
             prog.pc = entry;

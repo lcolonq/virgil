@@ -20,3 +20,4 @@ serde_json = "*" # json serialization
 anyhow = "*" # error handling
 lang-c = "*" # C parser
 image = "*" # image format loaders
+color-eyre = { version = "*", default-features = false } # error reporting and formatting
