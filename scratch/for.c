@@ -4,7 +4,6 @@ int main() {
     for (;;) {
         if (i > 10) break;
         x += 1;
-        // i += 1;
-        i++;
+        i += 1;
     }
 }

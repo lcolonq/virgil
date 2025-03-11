@@ -1,4 +1,23 @@
-use std::collections::{HashMap};
+use teleia::*;
+
+use std::collections::HashMap;
+
+#[derive(Debug, Clone)]
+pub enum Error {
+    InvalidIntegerSize(u64),
+    IntegerSizeOfAddress(Value),
+    InvalidOffset(Value),
+}
+impl std::error::Error for Error {}
+impl std::fmt::Display for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::InvalidIntegerSize(b) => write!(f, "invalid integer size: {b:}"),
+            Self::IntegerSizeOfAddress(v) => write!(f, "attempted to take integer size of address: {v:?}"),
+            Self::InvalidOffset(v) => write!(f, "invalid offset value: {v:?}"),
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 pub enum Instruction {
@@ -64,13 +83,13 @@ pub enum IntegerSize {
 }
 
 impl IntegerSize {
-    pub fn new(bits: u64) -> Self {
+    pub fn new(bits: u64) -> Erm<Self> {
         match bits {
-            8 => Self::Bits8,
-            16 => Self::Bits16,
-            32 => Self::Bits32,
-            64 => Self::Bits64,
-            _ => panic!("invalid integer size: {}", bits),
+            8 => Ok(Self::Bits8),
+            16 => Ok(Self::Bits16),
+            32 => Ok(Self::Bits32),
+            64 => Ok(Self::Bits64),
+            _ => Err(Error::InvalidIntegerSize(bits).into()),
         }
     }
     pub fn bits(&self) -> u64 {
@@ -81,7 +100,7 @@ impl IntegerSize {
             Self::Bits64 => 64,
         }
     }
-    pub fn max(x: &Self, y: &Self) -> Self {
+    pub fn max(x: &Self, y: &Self) -> Erm<Self> {
         Self::new(x.bits().max(y.bits()))
     }
     pub fn truncate(&self, x: u64) -> Value {
@@ -156,22 +175,22 @@ impl Value {
             ],
         }
     }
-    pub fn to_integer_size(&self) -> IntegerSize {
+    pub fn to_integer_size(&self) -> Erm<IntegerSize> {
         match self {
-            Value::U8(_) => IntegerSize::Bits8,
-            Value::U16(_) => IntegerSize::Bits16,
-            Value::U32(_) => IntegerSize::Bits32,
-            Value::U64(_) => IntegerSize::Bits64,
-            _ => panic!("attempt to get size of address value"),
+            Value::U8(_) => Ok(IntegerSize::Bits8),
+            Value::U16(_) => Ok(IntegerSize::Bits16),
+            Value::U32(_) => Ok(IntegerSize::Bits32),
+            Value::U64(_) => Ok(IntegerSize::Bits64),
+            _ => Err(Error::IntegerSizeOfAddress(self.clone()).into()),
         }
     }
-    pub fn to_offset(&self) -> u64 {
+    pub fn to_offset(&self) -> Erm<u64> {
         match self {
-            Value::U8(x) => *x as u64,
-            Value::U16(x) => *x as u64,
-            Value::U32(x) => *x as u64,
-            Value::U64(x) => *x as u64,
-            _ => panic!("attempt to convert invalid value to offset"),
+            Value::U8(x) => Ok(*x as u64),
+            Value::U16(x) => Ok(*x as u64),
+            Value::U32(x) => Ok(*x as u64),
+            Value::U64(x) => Ok(*x as u64),
+            _ => Err(Error::InvalidOffset(self.clone()).into()),
         }
     }
 }
@@ -391,10 +410,10 @@ impl State {
         }
     }
 
-    pub fn run_instruction(&mut self, ins: &Instruction, pc: u64) -> u64 {
+    pub fn run_instruction(&mut self, ins: &Instruction, pc: u64) -> Erm<u64> {
         match ins {
             Instruction::Syscall => {
-                let call = self.pop().to_offset();
+                let call = self.pop().to_offset()?;
                 log::info!("syscall: {}", call);
                 match call {
                     0 => { // debug
@@ -413,7 +432,7 @@ impl State {
                         }
                     },
                     2 => { // malloc
-                        let sz = self.pop().to_offset();
+                        let sz = self.pop().to_offset()?;
                         let addr = self.pop();
                         let ret = self.malloc(sz);
                         self.write(ret, addr);
@@ -428,68 +447,68 @@ impl State {
                         panic!("invalid syscall number: {}", call);
                     }
                 }
-                pc + 1
+                Ok(pc + 1)
             },
-            Instruction::Nop => { pc + 1 },
+            Instruction::Nop => { Ok(pc + 1) },
             Instruction::Lit8(v) => {
                 self.push(Value::U8(*v));
-                pc + 1
+                Ok(pc + 1)
             },
             Instruction::Lit16(v) => {
                 self.push(Value::U16(*v));
-                pc + 1
+                Ok(pc + 1)
             },
             Instruction::Lit32(v) => {
                 self.push(Value::U32(*v));
-                pc + 1
+                Ok(pc + 1)
             },
             Instruction::Lit64(v) => {
                 self.push(Value::U64(*v));
-                pc + 1
+                Ok(pc + 1)
             },
             Instruction::Program => {
                 self.push(Value::PC(0));
-                pc + 1
+                Ok(pc + 1)
             },
             Instruction::LocalAddr => {
                 self.push(Value::LocalOffset(self.control.len() as u64 - 1, 0));
-                pc + 1
+                Ok(pc + 1)
             },
             Instruction::GlobalAddr => {
                 self.push(Value::GlobalOffset(0));
-                pc + 1
+                Ok(pc + 1)
             },
             Instruction::ReadAddr => {
                 let addr = self.pop();
                 self.push(self.read_addr(addr));
-                pc + 1
+                Ok(pc + 1)
             },
             Instruction::Read8 => {
                 let addr = self.pop();
                 self.push(self.read8(addr));
-                pc + 1
+                Ok(pc + 1)
             },
             Instruction::Read16 => {
                 let addr = self.pop();
                 self.push(self.read16(addr));
-                pc + 1
+                Ok(pc + 1)
             },
             Instruction::Read32 => {
                 let addr = self.pop();
                 log::info!("read32: {:?}", addr);
                 self.push(self.read32(addr));
-                pc + 1
+                Ok(pc + 1)
             },
             Instruction::Read64 => {
                 let addr = self.pop();
                 self.push(self.read64(addr));
-                pc + 1
+                Ok(pc + 1)
             },
             Instruction::Write => {
                 let v = self.pop();
                 let addr = self.pop();
                 self.write(v, addr);
-                pc + 1
+                Ok(pc + 1)
             },
             Instruction::Not => {
                 let v = self.pop();
@@ -500,7 +519,7 @@ impl State {
                     Value::U64(x) => self.push(Value::U64((x == 0) as _)),
                     _ => panic!("attempted to negate non-integer: {:?}", v),
                 }
-                pc + 1
+                Ok(pc + 1)
             },
             Instruction::Equal => {
                 let x = self.pop();
@@ -516,12 +535,12 @@ impl State {
                         | (a, b@Value::PC(_))
                         => Value::U8((a == b) as _),
                     (u, v) => {
-                        let size = IntegerSize::max(&u.to_integer_size(), &v.to_integer_size());
-                        Value::U8((u.to_offset() == v.to_offset()) as _)
+                        let size = IntegerSize::max(&u.to_integer_size()?, &v.to_integer_size()?)?;
+                        Value::U8((u.to_offset()? == v.to_offset()?) as _)
                     }
                 };
                 self.push(v);
-                pc + 1
+                Ok(pc + 1)
             },
             Instruction::Less => {
                 let y = self.pop();
@@ -532,113 +551,113 @@ impl State {
                     (Value::HeapOffset(id0, a), Value::HeapOffset(id1, b)) if id0 == id1 => Value::U8((a < b) as _),
                     (Value::PC(a), Value::PC(b)) => Value::U8((a < b) as _),
                     (u, v) => {
-                        let size = IntegerSize::max(&u.to_integer_size(), &v.to_integer_size());
-                        Value::U8((u.to_offset() < v.to_offset()) as _)
+                        let size = IntegerSize::max(&u.to_integer_size()?, &v.to_integer_size()?)?;
+                        Value::U8((u.to_offset()? < v.to_offset()?) as _)
                     }
                 };
                 self.push(v);
-                pc + 1
+                Ok(pc + 1)
             },
             Instruction::Add => {
                 let x = self.pop();
                 let y = self.pop();
                 let v = match (y, x) {
-                    (Value::GlobalOffset(b), off) => Value::GlobalOffset(b + off.to_offset()),
-                    (Value::LocalOffset(f, b), off) => Value::LocalOffset(f, b + off.to_offset()),
-                    (Value::HeapOffset(id, b), off) => Value::HeapOffset(id, b + off.to_offset()),
-                    (Value::PC(b), off) => Value::PC(b + off.to_offset()),
+                    (Value::GlobalOffset(b), off) => Value::GlobalOffset(b + off.to_offset()?),
+                    (Value::LocalOffset(f, b), off) => Value::LocalOffset(f, b + off.to_offset()?),
+                    (Value::HeapOffset(id, b), off) => Value::HeapOffset(id, b + off.to_offset()?),
+                    (Value::PC(b), off) => Value::PC(b + off.to_offset()?),
                     (u, v) => {
-                        let size = IntegerSize::max(&u.to_integer_size(), &v.to_integer_size());
-                        size.truncate(u.to_offset() + v.to_offset())
+                        let size = IntegerSize::max(&u.to_integer_size()?, &v.to_integer_size()?)?;
+                        size.truncate(u.to_offset()? + v.to_offset()?)
                     }
                 };
                 self.push(v);
-                pc + 1
+                Ok(pc + 1)
             },
             Instruction::Sub => {
                 let x = self.pop();
                 let y = self.pop();
                 let v = match (y, x) {
-                    (Value::GlobalOffset(b), off) => Value::GlobalOffset(b - off.to_offset()),
-                    (Value::LocalOffset(f, b), off) => Value::LocalOffset(f, b - off.to_offset()),
-                    (Value::HeapOffset(id, b), off) => Value::HeapOffset(id, b - off.to_offset()),
-                    (Value::PC(b), off) => Value::PC(b - off.to_offset()),
+                    (Value::GlobalOffset(b), off) => Value::GlobalOffset(b - off.to_offset()?),
+                    (Value::LocalOffset(f, b), off) => Value::LocalOffset(f, b - off.to_offset()?),
+                    (Value::HeapOffset(id, b), off) => Value::HeapOffset(id, b - off.to_offset()?),
+                    (Value::PC(b), off) => Value::PC(b - off.to_offset()?),
                     (u, v) => {
-                        let size = IntegerSize::max(&u.to_integer_size(), &v.to_integer_size());
-                        size.truncate(u.to_offset() - v.to_offset())
+                        let size = IntegerSize::max(&u.to_integer_size()?, &v.to_integer_size()?)?;
+                        size.truncate(u.to_offset()? - v.to_offset()?)
                     }
                 };
                 self.push(v);
-                pc + 1
+                Ok(pc + 1)
             },
             Instruction::Mul => {
                 let x = self.pop();
                 let y = self.pop();
                 let v = match (y, x) {
-                    (Value::GlobalOffset(b), off) => Value::GlobalOffset(b * off.to_offset()),
-                    (Value::LocalOffset(f, b), off) => Value::LocalOffset(f, b * off.to_offset()),
-                    (Value::HeapOffset(id, b), off) => Value::HeapOffset(id, b * off.to_offset()),
-                    (Value::PC(b), off) => Value::PC(b * off.to_offset()),
+                    (Value::GlobalOffset(b), off) => Value::GlobalOffset(b * off.to_offset()?),
+                    (Value::LocalOffset(f, b), off) => Value::LocalOffset(f, b * off.to_offset()?),
+                    (Value::HeapOffset(id, b), off) => Value::HeapOffset(id, b * off.to_offset()?),
+                    (Value::PC(b), off) => Value::PC(b * off.to_offset()?),
                     (u, v) => {
-                        let size = IntegerSize::max(&u.to_integer_size(), &v.to_integer_size());
-                        size.truncate(u.to_offset() * v.to_offset())
+                        let size = IntegerSize::max(&u.to_integer_size()?, &v.to_integer_size()?)?;
+                        size.truncate(u.to_offset()? * v.to_offset()?)
                     }
                 };
                 self.push(v);
-                pc + 1
+                Ok(pc + 1)
             },
             Instruction::Div => {
                 let x = self.pop();
                 let y = self.pop();
                 let v = match (y, x) {
-                    (Value::GlobalOffset(b), off) => Value::GlobalOffset(b / off.to_offset()),
-                    (Value::LocalOffset(f, b), off) => Value::LocalOffset(f, b / off.to_offset()),
-                    (Value::HeapOffset(id, b), off) => Value::HeapOffset(id, b / off.to_offset()),
-                    (Value::PC(b), off) => Value::PC(b * off.to_offset()),
+                    (Value::GlobalOffset(b), off) => Value::GlobalOffset(b / off.to_offset()?),
+                    (Value::LocalOffset(f, b), off) => Value::LocalOffset(f, b / off.to_offset()?),
+                    (Value::HeapOffset(id, b), off) => Value::HeapOffset(id, b / off.to_offset()?),
+                    (Value::PC(b), off) => Value::PC(b / off.to_offset()?),
                     (u, v) => {
-                        let size = IntegerSize::max(&u.to_integer_size(), &v.to_integer_size());
-                        size.truncate(u.to_offset() / v.to_offset())
+                        let size = IntegerSize::max(&u.to_integer_size()?, &v.to_integer_size()?)?;
+                        size.truncate(u.to_offset()? / v.to_offset()?)
                     }
                 };
                 self.push(v);
-                pc + 1
+                Ok(pc + 1)
             },
             Instruction::Mod => {
                 let x = self.pop();
                 let y = self.pop();
                 let v = match (y, x) {
-                    (Value::GlobalOffset(b), off) => Value::GlobalOffset(b % off.to_offset()),
-                    (Value::LocalOffset(f, b), off) => Value::LocalOffset(f, b % off.to_offset()),
-                    (Value::HeapOffset(id, b), off) => Value::HeapOffset(id, b % off.to_offset()),
-                    (Value::PC(b), off) => Value::PC(b % off.to_offset()),
+                    (Value::GlobalOffset(b), off) => Value::GlobalOffset(b % off.to_offset()?),
+                    (Value::LocalOffset(f, b), off) => Value::LocalOffset(f, b % off.to_offset()?),
+                    (Value::HeapOffset(id, b), off) => Value::HeapOffset(id, b % off.to_offset()?),
+                    (Value::PC(b), off) => Value::PC(b % off.to_offset()?),
                     (u, v) => {
-                        let size = IntegerSize::max(&u.to_integer_size(), &v.to_integer_size());
-                        size.truncate(u.to_offset() % v.to_offset())
+                        let size = IntegerSize::max(&u.to_integer_size()?, &v.to_integer_size()?)?;
+                        size.truncate(u.to_offset()? % v.to_offset()?)
                     }
                 };
                 self.push(v);
-                pc + 1
+                Ok(pc + 1)
             },
             Instruction::Trunc8 => {
                 let x = self.pop();
                 self.push(self.trunc8(x));
-                pc + 1
+                Ok(pc + 1)
             },
             Instruction::Trunc16 => {
                 let x = self.pop();
                 self.push(self.trunc16(x));
-                pc + 1
+                Ok(pc + 1)
             },
             Instruction::Trunc32 => {
                 let x = self.pop();
                 self.push(self.trunc32(x));
-                pc + 1
+                Ok(pc + 1)
             },
             Instruction::Dup => {
                 let x = self.pop();
                 self.push(x.clone());
                 self.push(x);
-                pc + 1
+                Ok(pc + 1)
             },
             Instruction::Over => {
                 let x = self.pop();
@@ -646,18 +665,18 @@ impl State {
                 self.push(y.clone());
                 self.push(x);
                 self.push(y);
-                pc + 1
+                Ok(pc + 1)
             },
             Instruction::Swap => {
                 let x = self.pop();
                 let y = self.pop();
                 self.push(x);
                 self.push(y);
-                pc + 1
+                Ok(pc + 1)
             },
             Instruction::Drop => {
                 let _ = self.pop();
-                pc + 1
+                Ok(pc + 1)
             },
             Instruction::Rot => {
                 let x = self.pop();
@@ -667,16 +686,16 @@ impl State {
                 self.push(x);
                 self.push(z);
                 self.push(y);
-                pc + 1
+                Ok(pc + 1)
             },
             Instruction::Here => {
                 self.push(Value::PC(pc));
-                pc + 1
+                Ok(pc + 1)
             },
             Instruction::Jump => {
                 let t = self.pop();
                 if let Value::PC(x) = t {
-                    x
+                    Ok(x)
                 } else {
                     panic!("attempted to jump to non-address value: {:?}", t);
                 }
@@ -685,14 +704,14 @@ impl State {
                 let c = self.pop();
                 let mpc = self.pop();
                 // log::info!("jumpif: {:?} {:?}", c, mpc);
-                if c.to_offset() != 0 {
+                if c.to_offset()? != 0 {
                     if let Value::PC(x) = mpc {
-                        x
+                        Ok(x)
                     } else {
                         panic!("attempted to jump to non-address value: {:?}", mpc);
                     }
                 } else {
-                    pc + 1
+                    Ok(pc + 1)
                 }
             },
             Instruction::Call => {
@@ -700,14 +719,14 @@ impl State {
                 let t = self.pop();
                 if let Value::PC(x) = t {
                     self.control.push(Frame::new(pc + 1));
-                    x
+                    Ok(x)
                 } else {
                     panic!("attempted to call non-address value: {:?}", t);
                 }
             },
             Instruction::Return => {
                 if let Some(f) = self.control.pop() {
-                    f.return_pc
+                    Ok(f.return_pc)
                 } else {
                     panic!("control stack underflow");
                 }
@@ -715,7 +734,7 @@ impl State {
             Instruction::Dump => {
                 let x = self.pop();
                 log::info!("DUMP: {:?}", x);
-                pc + 1
+                Ok(pc + 1)
             },
         }
     }
@@ -736,13 +755,14 @@ impl Program {
     pub fn reset(&mut self) {
         self.pc = 0;
     }
-    pub fn step(&mut self, vm: &mut State) -> bool {
+    pub fn step(&mut self, vm: &mut State) -> Erm<bool> {
         if let Some(ins) = self.instructions.get(self.pc as usize) {
-            self.pc = vm.run_instruction(ins, self.pc);
-            true
-        } else { false }
+            self.pc = vm.run_instruction(ins, self.pc)?;
+            Ok(true)
+        } else { Ok(false) }
     }
-    pub fn run(&mut self, vm: &mut State) {
-        while self.step (vm) {};
+    pub fn run(&mut self, vm: &mut State) -> Erm<()> {
+        while self.step(vm)? {};
+        Ok(())
     }
 }

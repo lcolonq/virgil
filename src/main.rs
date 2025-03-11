@@ -1,6 +1,9 @@
 mod analyze;
 mod vm;
 mod compiler;
+mod debugger;
+
+use std::{io, thread};
 
 use teleia::*;
 use clap::{arg, command, Command};
@@ -26,6 +29,11 @@ pub async fn main() -> Erm<()> {
         .subcommand(
             Command::new("compile")
                 .about("Compile C source targeting the Bad Apple!! virtual machine")
+                .arg(arg!(<path> "Path to source file"))
+        )
+        .subcommand(
+            Command::new("debug")
+                .about("Compile and debug C source targeting the Bad Apple!! virtual machine")
                 .arg(arg!(<path> "Path to source file"))
         )
         .get_matches();
@@ -58,7 +66,7 @@ pub async fn main() -> Erm<()> {
                 vm::Instruction::Write,
                 vm::Instruction::Jump,
             ]);
-            prog.run(&mut st);
+            prog.run(&mut st)?;
         },
         Some(("compile", cm)) => {
             env_logger::Builder::new()
@@ -72,7 +80,29 @@ pub async fn main() -> Erm<()> {
             let mut vm = vm::State::new();
             let mut prog = vm::Program::new(ins);
             prog.pc = entry;
-            prog.run(&mut vm);
+            prog.run(&mut vm)?;
+        },
+        Some(("debug", cm)) => {
+            env_logger::Builder::new()
+                .filter(None, log::LevelFilter::Info)
+                .init();
+            install_error_handler();
+            let path = cm.get_one::<String>("path").unwrap();
+            let mut comp = compiler::State::new();
+            comp.load(&path)?;
+            let (entry, ins) = comp.finalize()?;
+            let mut debugger = debugger::Debugger::new(entry, ins);
+            let (mut interp, rx) = debugger::Interpreter::new();
+            let interp_jh: thread::JoinHandle<Erm<()>> = thread::spawn(move || {
+                interp.run(io::stdin())?;
+                Ok(())
+            });
+            let debug_jh: thread::JoinHandle<Erm<()>> = thread::spawn(move || {
+                debugger.run(rx)?;
+                Ok(())
+            });
+            interp_jh.join().unwrap()?;
+            debug_jh.join().unwrap()?;
         },
         _ => {},
     }
