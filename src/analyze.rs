@@ -42,7 +42,7 @@ impl Results {
     }
     fn analyze_frame(&mut self, idx: u32) {
         let path = format!("data/frames/{:0>4}.png", idx);
-        let img = image::io::Reader::open(path).expect("failed to open frame")
+        let img = image::ImageReader::open(path).expect("failed to open frame")
             .decode().expect("failed to decode frame")
             .to_rgb8();
         for x in 0..img.width() {

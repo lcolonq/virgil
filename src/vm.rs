@@ -1,3 +1,4 @@
+use serde::{Deserialize, Serialize};
 use teleia::*;
 
 use std::collections::HashMap;
@@ -19,7 +20,7 @@ impl std::fmt::Display for Error {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub enum Instruction {
     // Cheat lololololololol
     Syscall, // pop number and then do something very fancy based on the number hehe
@@ -113,7 +114,7 @@ impl IntegerSize {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum MemValue {
     LocalOffset(u64, u64),
     GlobalOffset(u64),
@@ -131,7 +132,7 @@ impl MemValue {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Value {
     Empty,
     LocalOffset(u64, u64),
@@ -195,7 +196,7 @@ impl Value {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Memory {
     pub contents: HashMap<u64, MemValue>
 }
@@ -208,7 +209,7 @@ impl Memory {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Frame {
     pub locals: Memory,
     pub return_pc: u64,
@@ -223,10 +224,12 @@ impl Frame {
     }
 }
 
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Allocation {
     pub mem: Memory,
 }
 
+#[derive(Clone, Serialize, Deserialize)]
 pub struct State {
     pub stack: Vec<Value>,
     pub heap: Vec<Allocation>,
@@ -740,6 +743,7 @@ impl State {
     }
 }
 
+#[derive(Serialize)]
 pub struct Program {
     pub pc: u64,
     pub instructions: Vec<Instruction>,

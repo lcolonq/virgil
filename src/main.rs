@@ -76,7 +76,7 @@ pub async fn main() -> Erm<()> {
             let path = cm.get_one::<String>("path").unwrap();
             let mut comp = compiler::State::new();
             comp.load(&path)?;
-            let (entry, ins) = comp.finalize()?;
+            let (entry, ins, _) = comp.finalize()?;
             let mut vm = vm::State::new();
             let mut prog = vm::Program::new(ins);
             prog.pc = entry;
@@ -87,11 +87,14 @@ pub async fn main() -> Erm<()> {
                 .filter(None, log::LevelFilter::Info)
                 .init();
             install_error_handler();
+            log::info!("starting debugger");
             let path = cm.get_one::<String>("path").unwrap();
             let mut comp = compiler::State::new();
-            comp.load(&path)?;
-            let (entry, ins) = comp.finalize()?;
-            let mut debugger = debugger::Debugger::new(entry, ins);
+            let _ = comp.load(&path)?;
+            let (entry, ins, debug) = comp.finalize()?;
+            log::info!("debug: {:?}", debug);
+            let src = std::fs::read_to_string(&path)?;
+            let mut debugger = debugger::Debugger::new(entry, ins, debug, Some(src));
             let (mut interp, rx) = debugger::Interpreter::new();
             let interp_jh: thread::JoinHandle<Erm<()>> = thread::spawn(move || {
                 interp.run(io::stdin())?;

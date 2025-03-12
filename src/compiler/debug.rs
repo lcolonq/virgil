@@ -1,24 +1,38 @@
 use std::collections::HashMap;
 
+#[derive(Debug, Clone)]
 pub struct Variable {
-    pub offset: u64,
+    pub nm: String,
     pub ty: super::Type,
 }
 
+#[derive(Debug, Clone)]
 pub struct Statement {
     pub src_start: u64,
     pub src_end: u64,
     pub instructions: std::ops::RangeInclusive<u64>, // what instructions were generated for this statement
 }
 
+#[derive(Debug, Clone)]
 pub struct Function {
-    pub vars: HashMap<String, Variable>,
+    pub nm: String,
+    pub instructions: std::ops::RangeInclusive<u64>,
+    pub vars: HashMap<u64, Variable>, // offsets to variables
     pub statements: Vec<Statement>, // all statements
-    pub instruction_statements: Vec<Option<u64>>, // for each instruction, which statement does it belong to, if any??
 }
 
+#[derive(Debug, Clone)]
 pub struct Struct {
 }
 
-pub struct DebugInfo {
+#[derive(Debug, Clone)]
+pub struct Info {
+    pub functions: Vec<Function>,
+}
+impl Info {
+    pub fn new() -> Self {
+        Self {
+            functions: Vec::new(),
+        }
+    }
 }

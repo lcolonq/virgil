@@ -264,6 +264,8 @@ pub struct State {
     pub typedefs: HashMap<String, Type>,
     pub structs: HashMap<String, Type>,
     pub unions: HashMap<String, Type>,
+    pub debug: debug::Info,
+    pub debug_cur_fn_stmts: Vec<debug::Statement>,
 }
 
 fn extract_declarationspecifier(vm: &mut State, ec: &ErrorContext, d: &[Node<ast::DeclarationSpecifier>]) -> Erm<Type> {
@@ -359,10 +361,12 @@ impl State {
             typedefs: HashMap::new(),
             structs: HashMap::new(),
             unions: HashMap::new(),
+            debug: debug::Info::new(),
+            debug_cur_fn_stmts: Vec::new(),
         }
     }
 
-    pub fn finalize(&self) -> Erm<(u64, Vec<vm::Instruction>)> {
+    pub fn finalize(self) -> Erm<(u64, Vec<vm::Instruction>, debug::Info)> {
         let main = self.functions.get("main").ok_or(LinkError::NoMainFunction)?;
         let entry = self.ins.instructions.len();
         let mut ins = self.ins.instructions.clone();
@@ -371,10 +375,10 @@ impl State {
         ins.push(vm::Instruction::Lit64(main.offset));
         ins.push(vm::Instruction::Add);
         ins.push(vm::Instruction::Call);
-        Ok((entry as _, ins))
+        Ok((entry as _, ins, self.debug))
     }
 
-    pub fn load(&mut self, path: &str) -> Erm<()> {
+    pub fn load(&mut self, path: &str) -> Erm<String> {
         let config = lang_c::driver::Config::default();
         let parse = lang_c::driver::parse(&config, path)?;
         let ec = ErrorContext {
@@ -383,7 +387,7 @@ impl State {
             span: lang_c::span::Span { start: 0, end: 0 },
         };
         self.compile_translation_unit(&ec, parse.unit)?;
-        Ok(())
+        Ok(parse.source)
     }
 
     fn pc(&mut self) -> u64 {
@@ -639,6 +643,8 @@ impl State {
     }
 
     fn compile_definition(&mut self, ec: &ErrorContext, nd: &Node<ast::FunctionDefinition>) -> Erm<()> {
+        self.debug_cur_fn_stmts.clear();
+        let ins_start = self.ins.tructions().len() as u64;
         nd.with_context("definition", ec, |ec, d| {
             let pc = self.pc();
             let basety = extract_declarationspecifier(self, &ec, &d.specifiers)?;
@@ -689,12 +695,20 @@ impl State {
             self.compile_statement(&ec, &d.statement)?;
             self.block_scopes.pop();
             self.ins.tructions().push(vm::Instruction::Return);
+            let ins_end = (self.ins.tructions().len() - 1) as u64;
+            self.debug.functions.push(debug::Function {
+                nm,
+                instructions: ins_start..=ins_end,
+                vars: HashMap::new(), // TODO
+                statements: self.debug_cur_fn_stmts.clone(),
+            });
             Ok(())
         })
     }
 
     // neither produces or consumes stack
     fn compile_statement(&mut self, ec: &ErrorContext, nd: &Node<ast::Statement>) -> Erm<()> {
+        let ins_start = self.ins.tructions().len() as u64;
         nd.with_context("statement", ec, |ec, d| {
             match d {
                 ast::Statement::Expression(mn) => {
@@ -822,6 +836,12 @@ impl State {
                 },
                 _ => return ec.erm(ErrorKind::Unimplemented(format!("statement: {:?}", d))),
             }
+            let ins_end = (self.ins.tructions().len() - 1) as u64;
+            self.debug_cur_fn_stmts.push(debug::Statement {
+                instructions: ins_start..=ins_end,
+                src_start: nd.span.start as u64,
+                src_end: nd.span.end as u64,
+            });
             Ok(())
         })
     }
